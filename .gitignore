@@ -94,6 +94,9 @@ desktop.ini
 *.db
 *.pid
 *.seed
+backend/var/
+backend/var/*.json
+backend/var/*.lock
 
 # BEGIN S11 LOCAL SNAPSHOT EXCLUSIONS
 **/.git/**

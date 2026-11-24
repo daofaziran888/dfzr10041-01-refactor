@@ -81,5 +81,48 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 指纹字段选择与历史复盘
+
+两处去重原先各写了一遍“取哪些字段、值从哪里取”的逻辑，现收拢为
+`backend/app/core/fingerprint.py` 的 `FingerprintFieldSelection`：
+
+- `ordinary(...)`：普通去重（`IngestPipeline.dedup_events`）只按原始解析字段取值，
+  字段为空也照常参与指纹；
+- `rule(...)`：基于规则的历史去重（`DedupFilter.fingerprint` 与
+  `DedupSamplePipeline.deduplicate`）在原始字段为空时回退已有脱敏字段，
+  命中/忽略统计仍由调用方维护。
+
+两种模式与重构前逐字节一致，旧调用方的行为不变。
+
+历史复盘与调查采样的入口在 `backend/app/core/review_service.py`，状态落在
+`backend/var/review_state.json`（可用 `REVIEW_STATE_PATH` 覆盖）：
+
+- 复盘只认可核验的入口凭证 + 归档当时字段重算的归档指纹；缺少凭证保持“待核”，
+  不按名称/时间猜来源；
+- 当前原行被换过字段时隔离为“失配隔离”，并在 `mismatches[].locations` 中指出
+  字段名、字段序号、归档值与当前值；
+- 已核验原行交付调查采样时生成样本；交付与确认按 `(复盘编号, 原行编号)` 幂等，
+  已派出样本锁定指纹依据，后续凭证更正只记录复核、不重写去重依据；
+- 会话、复盘项、样本、交付原行与审计事件全部落盘，重启后按复盘编号回查，
+  未交付原行继续保留在待办中。
+
+前端“历史复盘”页（`/review`）可填写复盘编号继续处理、领取剩余样本并确认送达。
+
+```bash
+# 后端接口
+POST /api/reviews                     开立复盘（可按批次 + 可选凭证）
+POST /api/reviews/archives            登记归档批次
+POST /api/reviews/originals           登记当前实际原行
+POST /api/reviews/{id}/credentials    补送/更正入口凭证
+POST /api/reviews/{id}/deliver        交付已核验原行（幂等）
+POST /api/reviews/{id}/resume         重启后续办并列出待办
+POST /api/reviews/{id}/acknowledge    确认样本送达（幂等）
+GET  /api/reviews/{id}                按编号回查
+```
+
+测试：`cd backend && .venv/bin/python tests/test_review_investigation.py`
+（含普通/规则去重差异、缺凭证、完整凭证、原行失配、进程重启、补送凭证、
+重复确认与不增发等场景）。
+
 领域：数据工程
 子方向：数据采集、爬虫与RPA

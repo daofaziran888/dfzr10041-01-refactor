@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from app.core.fingerprint import FingerprintFieldSelection
 from app.core.models import (
     BatchCheckpoint, EventRecord, EventTypeDef, IngestJob, IngestMetric,
     LogEntry, LogFormat, LogSourceConfig, ParseResultStatus, ParseRule,
@@ -250,15 +251,14 @@ class IngestPipeline:
         """对事件记录集合执行去重过滤——对应 dedup_filter 模块。
 
         使用 SHA256 指纹算法，基于指定的去重字段生成指纹。
+        字段选择复用 ``FingerprintFieldSelection``：普通去重只看原始字段，
+        两个字段都为空时照样参与指纹（不会改读脱敏值）。
         """
+        selection = FingerprintFieldSelection.ordinary(dedup_fields)
         seen: set[str] = set()
         unique: list[EventRecord] = []
         for record in records:
-            key_parts = [record.event_type.type_id]
-            for field in sorted(dedup_fields):
-                val = record.parsed_fields.get(field, "")
-                key_parts.append(f"{field}={val}")
-            fp = hashlib.sha256("|".join(key_parts).encode()).hexdigest()
+            fp = selection.fingerprint(record)
             if fp in seen:
                 continue
             seen.add(fp)

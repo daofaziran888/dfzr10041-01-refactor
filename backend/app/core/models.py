@@ -8,6 +8,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from app.core.fingerprint import FingerprintFieldSelection
+
 
 class LogFormat(Enum):
     """日志格式枚举，对应 parser_rule 的正则表达式匹配。"""
@@ -239,14 +241,17 @@ class DedupFilter:
     hit_count: int = 0
     ignore_count: int = 0
 
+    def fingerprint_selection(self) -> FingerprintFieldSelection:
+        """返回本规则使用的指纹字段选择数据（历史规则去重要求脱敏回退）。"""
+        return FingerprintFieldSelection.rule(self.dedup_fields)
+
     def fingerprint(self, event: EventRecord) -> str:
-        """基于去重字段生成事件指纹。"""
-        key_parts = [event.event_type.type_id]
-        for field in sorted(self.dedup_fields):
-            val = event.parsed_fields.get(field) or event.masked_fields.get(field) or ""
-            key_parts.append(f"{field}={val}")
-        raw_key = "|".join(key_parts)
-        return hashlib.sha256(raw_key.encode()).hexdigest()
+        """基于去重字段生成事件指纹。
+
+        字段选择与摘要计算统一由 ``FingerprintFieldSelection`` 负责；
+        原始字段为空时回退到已有脱敏字段的行为保持不变。
+        """
+        return self.fingerprint_selection().fingerprint(event)
 
     def is_duplicate(self, event: EventRecord, seen_fingerprints: set[str]) -> bool:
         """判断事件是否重复。"""
